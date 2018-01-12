@@ -4,6 +4,8 @@ import os
 import logging
 import psycopg2
 import psycopg2.extras
+import schema
+from relation_type import RelationType
 import sys
 import configargparse
 
@@ -31,9 +33,10 @@ def configure():
     parser.add_argument("--rds_database", env_var="RDS_DATABASE", type=str, help="RDS Database", required=True)
     parser.add_argument("--rds_user", env_var="RDS_USER", type=str, help="RDS User", required=True)
     parser.add_argument("--rds_password", env_var="RDS_PASSWORD", type=str, help="RDS Password", required=True)
+    parser.add_argument("--ingestion_type", env_var="INGESTION_TYPE", type=str, help="Ingestion Type", required=True)
     args, unknown = parser.parse_known_args()
     if unknown:
-        logger.info("received unknown arguments ", unknown)
+        logger.info("received unknown arguments " + unknown)
     return args
 
 @contextmanager
@@ -45,60 +48,56 @@ def open_cursor(rds_server, rds_database, rds_user, rds_password, readonly=True)
     cursor.close()
     connection.close()
 
-def column_or_null(column):
-    if column == "\\N":
-        return None
 
-    return column
-
-def read_line(line):
-    columns = line.split('\t')
-    
-    return {
-        "id": columns[0],
-        "titleType": column_or_null(columns[1]),
-        "primaryTitle": column_or_null(columns[2]),
-        "originalTitle": column_or_null(columns[3]),
-        "isAdult": column_or_null(columns[4]),
-        "startYear": column_or_null(columns[5]),
-        "endYear": column_or_null(columns[6]),
-        "runtimeMinutes": column_or_null(columns[7]),
-        "genres": column_or_null(columns[8])
-    }
-
-def iterate_over_file(filename):
+def iterate_over_file(filename, read_line_function):
     with open(filename) as file_handle:
         i = 0
         for line in file_handle:
             if i > 0:
-                yield read_line(line)
+                yield read_line_function(line)
             i += 1
-
-def store_result(cursor, result):
-    cursor.execute("""
-        INSERT INTO imdb.titlebasics (id, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres)
-        VALUES (%(id)s, %(titleType)s, %(primaryTitle)s, %(originalTitle)s, %(isAdult)s, %(startYear)s, %(endYear)s, %(runtimeMinutes)s, %(genres)s)
-        ON CONFLICT DO UPDATE SET
-        titleType = %(titleType)s,
-        primaryTitle = %(primaryTitle)s,
-        originalTitle = %(originalTitle)s,
-        isAdult = %(isAdult)s,
-        startYear = %(startYear)s,
-        endYear = %(endYear)s,
-        runtimeMinutes = %(runtimeMinutes)s,
-        genres = %(genres)s;
-    """, result)
 
 def main(
     rds_server,
     rds_database,
     rds_user,
     rds_password,
+    ingestion_type
     ):
+    ingestion_type = ingestion_type.lower()
+    logger.info(ingestion_type)
 
     with open_cursor(rds_server, rds_database, rds_user, rds_password, readonly=False) as cursor:
-        for item in iterate_over_file("data.tsv"):
-            store_result(cursor, item)
+        if ingestion_type == "titles":
+            title_ids = set(schema.iterate_over_title_ids(cursor))
+            for title in iterate_over_file("title.basics.tsv", schema.read_title_line):
+                if title["titleId"] not in title_ids:
+                    schema.store_title(cursor, title)
+        else:
+            title_name_ids = set(schema.iterate_over_title_name_ids(cursor))
+
+        if ingestion_type == "names":
+            name_ids = set(schema.iterate_over_name_ids(cursor))
+            for name in iterate_over_file("name.basics.tsv", schema.read_name_line):
+                if name["nameId"] not in name_ids:
+                    schema.store_name(cursor, name)
+
+                for known_for_title in name["knownForTitles"]:
+                    if (known_for_title, name["nameId"]) not in title_name_ids:
+                        schema.store_title_name(cursor, {
+                            "nameId": name["nameId"],
+                            "titleId": known_for_title.strip(),
+                            "relationType": RelationType.KNOWN_FOR.value
+                        })
+        if ingestion_type == "principals":
+            for titlePrincipals in iterate_over_file("title.principals.tsv", schema.read_title_principals_line):
+                for nameId in titlePrincipals["nameIds"]:
+                    if (titlePrincipals["titleId"], nameId) not in title_name_ids:
+                        schema.store_title_name(cursor, {
+                            "nameId": nameId.strip(),
+                            "titleId": titlePrincipals["titleId"],
+                            "relationType": RelationType.PRINCIPAL.value
+                        })
 
 if __name__ == "__main__":
     main(**configure().__dict__)
