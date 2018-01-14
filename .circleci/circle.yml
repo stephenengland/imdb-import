@@ -1,0 +1,33 @@
+version: 2
+jobs:
+  build:
+    working_directory: ~/imdb-import
+    docker:
+      - image: docker:17.05.0-ce-git
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Docker Build
+          command: docker build -t="imdb-import" .
+      - run:
+          name: Add aws cli dependencies
+          command: |
+            apk add --update python python-dev py-pip build-base libffi-dev openssl-dev
+      - run:
+          name: Add aws cli
+          command: |
+            pip install awscli
+      - deploy:
+          name: Push application Docker image
+          command: |
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
+              login="$(aws ecr get-login --region us-east-1)"
+              ${login}
+              docker tag imdb-import "${ECR_ENDPOINT}/imdb-import:${CIRCLE_SHA1}"
+              docker push "${ECR_ENDPOINT}/imdb-import:${CIRCLE_SHA1}"
+              docker tag imdb-import "${ECR_ENDPOINT}/imdb-import:latest"
+              docker push "${ECR_ENDPOINT}/imdb-import:latest"
+              aws lambda invoke  --region us-east-1 --function-name deploy-imdb-import deploy_output.txt
+              cat deploy_output.txt
+            fi
