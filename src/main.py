@@ -90,15 +90,10 @@ def main(
                             "relationType": RelationType.KNOWN_FOR.value
                         })
         if ingestion_type == "principals":
-            title_ids = set(schema.iterate_over_title_ids(cursor))
             for titlePrincipals in iterate_over_file("title.principals.tsv", schema.read_title_principals_line):
                 for nameId in titlePrincipals["nameIds"]:
                     titleId = titlePrincipals["titleId"] 
-                    if (
-                        (titleId, nameId) not in title_name_ids and
-                        titleId in title_ids and
-                        nameId in name_ids
-                        ):
+                    if (titleId, nameId) not in title_name_ids:
                         schema.store_title_name(cursor, {
                             "nameId": nameId.strip(),
                             "titleId": titlePrincipals["titleId"],
