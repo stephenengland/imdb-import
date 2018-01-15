@@ -68,35 +68,45 @@ def main(
     logger.info(ingestion_type)
 
     with open_cursor(rds_server, rds_database, rds_user, rds_password, readonly=False) as cursor:
+        title_ids = set(schema.iterate_over_title_ids(cursor))
         if ingestion_type == "titles":
-            title_ids = set(schema.iterate_over_title_ids(cursor))
             for title in iterate_over_file("title.basics.tsv", schema.read_title_line):
                 if title["titleId"] not in title_ids:
                     schema.store_title(cursor, title)
-        else:
-            title_name_ids = set(schema.iterate_over_title_name_ids(cursor))
+
+            return
+        name_ids = set(schema.iterate_over_name_ids(cursor))
+        title_name_ids = set(schema.iterate_over_title_name_ids(cursor))
 
         if ingestion_type == "names":
-            name_ids = set(schema.iterate_over_name_ids(cursor))
             for name in iterate_over_file("name.basics.tsv", schema.read_name_line):
                 if name["nameId"] not in name_ids:
                     schema.store_name(cursor, name)
 
                 for known_for_title in name["knownForTitles"]:
-                    if (known_for_title, name["nameId"]) not in title_name_ids:
+                    title_id = known_for_title.strip()
+                    if (
+                        (known_for_title, name["nameId"]) not in title_name_ids and
+                        title_id in title_ids
+                        ):
                         schema.store_title_name(cursor, {
                             "nameId": name["nameId"],
-                            "titleId": known_for_title.strip(),
+                            "titleId": title_id,
                             "relationType": RelationType.KNOWN_FOR.value
                         })
         if ingestion_type == "principals":
             for titlePrincipals in iterate_over_file("title.principals.tsv", schema.read_title_principals_line):
-                for nameId in titlePrincipals["nameIds"]:
-                    titleId = titlePrincipals["titleId"] 
-                    if (titleId, nameId) not in title_name_ids:
+                for name_id in titlePrincipals["nameIds"]:
+                    name_id = name_id.strip()
+                    title_id = titlePrincipals["titleId"].strip()
+                    if (
+                        (title_id, name_id) not in title_name_ids and
+                        title_id in title_ids and
+                        name_id in name_ids
+                        ):
                         schema.store_title_name(cursor, {
-                            "nameId": nameId.strip(),
-                            "titleId": titlePrincipals["titleId"],
+                            "nameId": name_id,
+                            "titleId": title_id,
                             "relationType": RelationType.PRINCIPAL.value
                         })
 
