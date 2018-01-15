@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#wget -qO- https://datasets.imdbws.com/title.basics.tsv.gz | gunzip > title.basics.tsv
-#python -u ./main.py --ingestion_type titles
-#rm title.basics.tsv
+wget -qO- https://datasets.imdbws.com/title.basics.tsv.gz | gunzip > title.basics.tsv
+python -u ./main.py --ingestion_type titles
+rm title.basics.tsv
 
 wget -qO- https://datasets.imdbws.com/name.basics.tsv.gz | gunzip > name.basics.tsv
 python -u ./main.py --ingestion_type names
