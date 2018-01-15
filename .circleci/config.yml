@@ -28,6 +28,6 @@ jobs:
               docker push "${ECR_ENDPOINT}/imdb-import:${CIRCLE_SHA1}"
               docker tag imdb-import "${ECR_ENDPOINT}/imdb-import:latest"
               docker push "${ECR_ENDPOINT}/imdb-import:latest"
-              aws lambda invoke  --region us-east-1 --function-name deploy-imdb-import deploy_output.txt
+              aws lambda invoke  --region us-east-1 --function-name run-imdb-import deploy_output.txt
               cat deploy_output.txt
             fi
