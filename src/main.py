@@ -11,6 +11,7 @@ import configargparse
 
 from contextlib import contextmanager
 from pathlib import Path
+from batch_iterator import batch_iterator
 
 
 # Configure loging
@@ -57,6 +58,18 @@ def iterate_over_file(filename, read_line_function):
                 yield read_line_function(line)
             i += 1
 
+def iterate_over_principals():
+    for titlePrincipals in iterate_over_file("title.principals.tsv", schema.read_title_principals_line):
+        for name_id in titlePrincipals["nameIds"]:
+            name_id = name_id.strip()
+            title_id = titlePrincipals["titleId"].strip()
+            
+            yield {
+                "nameId": name_id,
+                "titleId": title_id,
+                "relationType": RelationType.PRINCIPAL.value
+            }
+
 def main(
     rds_server,
     rds_database,
@@ -68,47 +81,59 @@ def main(
     logger.info(ingestion_type)
 
     with open_cursor(rds_server, rds_database, rds_user, rds_password, readonly=False) as cursor:
+        total = 0
         title_ids = set(schema.iterate_over_title_ids(cursor))
-        if ingestion_type == "titles":
-            for title in iterate_over_file("title.basics.tsv", schema.read_title_line):
-                if title["titleId"] not in title_ids:
-                    schema.store_title(cursor, title)
 
+        def title_does_not_already_exist(title):
+            return title["titleId"] not in title_ids
+
+        if ingestion_type == "titles":
+            for titles in batch_iterator(iterate_over_file("title.basics.tsv", schema.read_title_line), filter_expression=title_does_not_already_exist):
+                schema.store_titles(cursor, titles)
+                total += len(titles)
+                if total % 10000 == 0:
+                    print("Titles inserted: " + str(total))
             return
+
         name_ids = set(schema.iterate_over_name_ids(cursor))
         title_name_ids = set(schema.iterate_over_title_name_ids(cursor))
 
-        if ingestion_type == "names":
-            for name in iterate_over_file("name.basics.tsv", schema.read_name_line):
-                if name["nameId"] not in name_ids:
-                    schema.store_name(cursor, name)
+        def name_does_not_already_exist(name):
+            return name["nameId"] not in name_ids
 
-                for known_for_title in name["knownForTitles"]:
-                    title_id = known_for_title.strip()
-                    if (
-                        (known_for_title, name["nameId"]) not in title_name_ids and
-                        title_id in title_ids
-                        ):
-                        schema.store_title_name(cursor, {
-                            "nameId": name["nameId"],
-                            "titleId": title_id,
-                            "relationType": RelationType.KNOWN_FOR.value
-                        })
+        if ingestion_type == "names":
+            def name_title_relation_is_ok_to_insert(name_title_id):
+                title_id = name_title_id["titleId"]
+                name_id = name_title_id["nameId"]
+                relation_type = name_title_id["relationType"]
+                return (title_id, name_id, relation_type) not in title_name_ids and title_id in title_ids
+
+            for names in batch_iterator(iterate_over_file("name.basics.tsv", schema.read_name_line), filter_expression=name_does_not_already_exist):
+                schema.store_names(cursor, names)
+
+                known_for_title_ids = [{
+                    "titleId": known_for_title.strip(), 
+                    "nameId": name["nameId"],
+                    "relationType": RelationType.KNOWN_FOR.value
+                } for name in names for known_for_title in name["knownForTitles"]]
+
+                for name_title_ids in batch_iterator(known_for_title_ids, filter_expression=name_title_relation_is_ok_to_insert):
+                    schema.store_title_names(cursor, name_title_ids)
+                
+                total += len(names)
+                if total % 10000 == 0:
+                    print("Names inserted: " + str(total))
+
         if ingestion_type == "principals":
-            for titlePrincipals in iterate_over_file("title.principals.tsv", schema.read_title_principals_line):
-                for name_id in titlePrincipals["nameIds"]:
-                    name_id = name_id.strip()
-                    title_id = titlePrincipals["titleId"].strip()
-                    if (
-                        (title_id, name_id) not in title_name_ids and
-                        title_id in title_ids and
-                        name_id in name_ids
-                        ):
-                        schema.store_title_name(cursor, {
-                            "nameId": name_id,
-                            "titleId": title_id,
-                            "relationType": RelationType.PRINCIPAL.value
-                        })
+            
+            def principal_name_title_relation_is_ok_to_insert(name_title_id):
+                title_id = name_title_id["titleId"]
+                name_id = name_title_id["nameId"]
+                relation_type = name_title_id["relationType"]
+                return (title_id, name_id, relation_type) not in title_name_ids and title_id in title_ids and name_id in name_ids
+
+            for title_principals in batch_iterator(iterate_over_principals, filter_expression=principal_name_title_relation_is_ok_to_insert):
+                schema.store_title_names(cursor, title_principals)
 
 if __name__ == "__main__":
     main(**configure().__dict__)
