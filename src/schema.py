@@ -47,6 +47,15 @@ def read_title_principals_line(line):
         "nameIds": split_if_not_null(columns[1])
     }
 
+def read_title_ratings_line(line):
+    columns = line.split('\t')
+
+    return {
+        "titleId": columns[0],
+        "averageRating": columns[1],
+        "numVotes": columns[2]
+    }
+
 def iterate_over_title_ids(cursor):
     cursor.execute("""
         select titleId
@@ -91,7 +100,7 @@ def store_title(cursor, result):
 
 def store_titles(cursor, results):
     execute_values(cursor,
-        "INSERT INTO imdb.titleBasics (titleId, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres) VALUES %s",
+        "INSERT INTO imdb.titleBasics (titleId, titleType, primaryTitle, originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres) VALUES %s ON CONFLICT (titleId) DO NOTHING",
         generate_tuple_values(["titleId", "titleType", "primaryTitle", "originalTitle", "isAdult", "startYear", "endYear", "runtimeMinutes", "genres"], results))
 
 def store_name(cursor, result):
@@ -107,7 +116,7 @@ def store_name(cursor, result):
 
 def store_names(cursor, results):
     execute_values(cursor,
-        "INSERT INTO imdb.nameBasics (nameId, primaryName, birthYear, deathYear, primaryProfession) VALUES %s",
+        "INSERT INTO imdb.nameBasics (nameId, primaryName, birthYear, deathYear, primaryProfession) VALUES %s ON CONFLICT (nameId) DO NOTHING",
         generate_tuple_values(["nameId", "primaryName", "birthYear", "deathYear", "primaryProfession"], results))
 
 def store_title_name(cursor, result):
@@ -117,9 +126,18 @@ def store_title_name(cursor, result):
         ON CONFLICT (titleId, nameId) DO NOTHING;
     """, result)
 
-def store_title_names(cursor, results):
-    execute_values(cursor, "INSERT INTO imdb.titleName (nameId, titleId, relationType) VALUES %s", generate_tuple_values(["nameId", "titleId", "relationType"], results))
+def store_title_names_ingestion(cursor, results):
+    execute_values(cursor, "INSERT INTO imdb.titleNameIngestion (nameId, titleId, relationType) VALUES %s", generate_tuple_values(["nameId", "titleId", "relationType"], results))
+
+def store_title_ratings_ingestion(cursor, results):
+    execute_values(cursor, """
+    INSERT INTO imdb.titleRatingsIngestion (titleId, averageRating, numVotes) 
+    VALUES %s 
+    ON CONFLICT (titleId)
+    DO UPDATE SET
+        averageRating = excluded.averageRating,
+        numVotes = excluded.numVotes
+    """, generate_tuple_values(["titleId", "averageRating", "numVotes"], results))
 
 def generate_tuple_values(fields, results):
     return [tuple([result[field] for field in fields]) for result in results]
-    

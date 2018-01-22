@@ -82,33 +82,45 @@ def main(
 
     with open_cursor(rds_server, rds_database, rds_user, rds_password, readonly=False) as cursor:
         total = 0
-        title_ids = set(schema.iterate_over_title_ids(cursor))
 
-        def title_does_not_already_exist(title):
-            return title["titleId"] not in title_ids
+        def title_exists(title):
+            return title["titleId"] in title_ids
 
         if ingestion_type == "titles":
-            for titles in batch_iterator(iterate_over_file("title.basics.tsv", schema.read_title_line), filter_expression=title_does_not_already_exist):
+            for titles in batch_iterator(iterate_over_file("title.basics.tsv", schema.read_title_line)):
                 schema.store_titles(cursor, titles)
                 total += len(titles)
-                if total % 10000 == 0:
+                if total % 100000 == 0:
                     print("Titles inserted: " + str(total))
             return
 
-        name_ids = set(schema.iterate_over_name_ids(cursor))
-        title_name_ids = set(schema.iterate_over_title_name_ids(cursor))
+        if ingestion_type == "ratings":
+            cursor.execute("""
+                delete from imdb.titleRatingsIngestion
+            """)
+            
+            for ratings in batch_iterator(iterate_over_file("title.ratings.tsv", schema.read_title_ratings_line)):
+                schema.store_title_ratings_ingestion(cursor, ratings)
 
-        def name_does_not_already_exist(name):
-            return name["nameId"] not in name_ids
+            cursor.execute("""
+                insert into imdb.titleRatings (titleId, averageRating, numVotes) 
+                select i.titleId, i.averageRating, i.numVotes
+                from imdb.titleRatingsIngestion i
+                    inner join imdb.titleBasics tb
+                        on tb.titleId = i.titleId
+                ON CONFLICT (titleId)
+                DO UPDATE SET
+                    averageRating = excluded.averageRating,
+                    numVotes = excluded.numVotes
+            """)
+
+            return
 
         if ingestion_type == "names":
-            def name_title_relation_is_ok_to_insert(name_title_id):
-                title_id = name_title_id["titleId"]
-                name_id = name_title_id["nameId"]
-                relation_type = name_title_id["relationType"]
-                return (title_id, name_id, relation_type) not in title_name_ids and title_id in title_ids
-
-            for names in batch_iterator(iterate_over_file("name.basics.tsv", schema.read_name_line), filter_expression=name_does_not_already_exist):
+            cursor.execute("""
+                delete from imdb.titleRatingsIngestion
+            """)
+            for names in batch_iterator(iterate_over_file("name.basics.tsv", schema.read_name_line)):
                 schema.store_names(cursor, names)
 
                 known_for_title_ids = [{
@@ -117,23 +129,43 @@ def main(
                     "relationType": RelationType.KNOWN_FOR.value
                 } for name in names for known_for_title in name["knownForTitles"]]
 
-                for name_title_ids in batch_iterator(known_for_title_ids, filter_expression=name_title_relation_is_ok_to_insert):
-                    schema.store_title_names(cursor, name_title_ids)
-                
+                for name_title_ids in batch_iterator(known_for_title_ids):
+                    schema.store_title_names_ingestion(cursor, name_title_ids)
+
                 total += len(names)
-                if total % 10000 == 0:
+                if total % 100000 == 0:
                     print("Names inserted: " + str(total))
+            
+            cursor.execute("""
+                insert into imdb.titleName (titleId, nameId, relationType)
+                select i.titleId, i.nameId, i.relationType
+                from imdb.titleNameIngestion i
+                    inner join imdb.titleBasics tb
+                        on tb.titleId = i.titleId
+                    inner join imdb.nameBasics nb
+                        on nb.nameId = i.nameId
+                ON CONFLICT (titleId, nameId, relationType) DO NOTHING;
+            """)
+            return
 
         if ingestion_type == "principals":
-            
-            def principal_name_title_relation_is_ok_to_insert(name_title_id):
-                title_id = name_title_id["titleId"]
-                name_id = name_title_id["nameId"]
-                relation_type = name_title_id["relationType"]
-                return (title_id, name_id, relation_type) not in title_name_ids and title_id in title_ids and name_id in name_ids
+            cursor.execute("""
+                delete from imdb.titleRatingsIngestion
+            """)
 
-            for title_principals in batch_iterator(iterate_over_principals, filter_expression=principal_name_title_relation_is_ok_to_insert):
-                schema.store_title_names(cursor, title_principals)
+            for title_principals in batch_iterator(iterate_over_principals()):
+                schema.store_title_names_ingestion(cursor, title_principals)
+            
+            cursor.execute("""
+                insert into imdb.titleName (titleId, nameId, relationType)
+                select i.titleId, i.nameId, i.relationType
+                from imdb.titleNameIngestion i
+                    inner join imdb.titleBasics tb
+                        on tb.titleId = i.titleId
+                    inner join imdb.nameBasics nb
+                        on nb.nameId = i.nameId
+                ON CONFLICT (titleId, nameId, relationType) DO NOTHING;
+            """)
 
 if __name__ == "__main__":
     main(**configure().__dict__)
