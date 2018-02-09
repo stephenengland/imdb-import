@@ -95,31 +95,34 @@ def main(
             return
 
         if ingestion_type == "ratings":
-            cursor.execute("""
-                delete from imdb.titleRatingsIngestion
-            """)
+            cursor.execute("truncate imdb.titleRatingsIngestion")
             
             for ratings in batch_iterator(iterate_over_file("title.ratings.tsv", schema.read_title_ratings_line)):
                 schema.store_title_ratings_ingestion(cursor, ratings)
 
-            cursor.execute("""
-                insert into imdb.titleRatings (titleId, averageRating, numVotes) 
-                select i.titleId, i.averageRating, i.numVotes
-                from imdb.titleRatingsIngestion i
-                    inner join imdb.titleBasics tb
-                        on tb.titleId = i.titleId
-                ON CONFLICT (titleId)
-                DO UPDATE SET
-                    averageRating = excluded.averageRating,
-                    numVotes = excluded.numVotes
-            """)
+            for i in range(1000):
+                logger.info("Running title ratings ingestion insert partition :" + str(i))
+                cursor.execute("""
+                    insert into imdb.titleRatings (titleId, averageRating, numVotes) 
+                    select i.titleId, i.averageRating, i.numVotes
+                    from imdb.titleRatingsIngestion i
+                        inner join imdb.titleBasics tb
+                            on tb.titleId = i.titleId
+                    where i.id %% 1000 = %(iterator_i)s
+                    ON CONFLICT (titleId)
+                    DO UPDATE SET
+                        averageRating = excluded.averageRating,
+                        numVotes = excluded.numVotes;
+                """, {
+                    "iterator_i": i
+                })
+            
+            cursor.execute("truncate imdb.titleRatingsIngestion")
 
             return
 
         if ingestion_type == "names":
-            cursor.execute("""
-                delete from imdb.titleRatingsIngestion
-            """)
+            cursor.execute("truncate imdb.titleNameIngestion")
             for names in batch_iterator(iterate_over_file("name.basics.tsv", schema.read_name_line)):
                 schema.store_names(cursor, names)
 
@@ -136,22 +139,27 @@ def main(
                 if total % 100000 == 0:
                     print("Names inserted: " + str(total))
             
-            cursor.execute("""
-                insert into imdb.titleName (titleId, nameId, relationType)
-                select i.titleId, i.nameId, i.relationType
-                from imdb.titleNameIngestion i
-                    inner join imdb.titleBasics tb
-                        on tb.titleId = i.titleId
-                    inner join imdb.nameBasics nb
-                        on nb.nameId = i.nameId
-                ON CONFLICT (titleId, nameId, relationType) DO NOTHING;
-            """)
+            for i in range(1000):
+                logger.info("Running title name ingestion insert partition :" + str(i))
+                cursor.execute("""
+                    insert into imdb.titleName (titleId, nameId, relationType)
+                    select i.titleId, i.nameId, i.relationType
+                    from imdb.titleNameIngestion i
+                        inner join imdb.titleBasics tb
+                            on tb.titleId = i.titleId
+                        inner join imdb.nameBasics nb
+                            on nb.nameId = i.nameId
+                    where i.id %% 1000 = %(iterator_i)s
+                    ON CONFLICT (titleId, nameId, relationType) DO NOTHING;
+                """, {
+                    "iterator_i": i
+                })
+            
+            cursor.execute("truncate imdb.titleNameIngestion")
             return
 
         if ingestion_type == "principals":
-            cursor.execute("""
-                delete from imdb.titleRatingsIngestion
-            """)
+            cursor.execute("truncate imdb.titleNameIngestion")
 
             for title_principals in batch_iterator(iterate_over_principals()):
                 schema.store_title_names_ingestion(cursor, title_principals)
@@ -171,6 +179,8 @@ def main(
                 """, {
                     "iterator_i": i
                 })
+            
+            cursor.execute("truncate imdb.titleNameIngestion")
 
 if __name__ == "__main__":
     main(**configure().__dict__)
