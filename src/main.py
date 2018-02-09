@@ -100,7 +100,7 @@ def main(
             for ratings in batch_iterator(iterate_over_file("title.ratings.tsv", schema.read_title_ratings_line)):
                 schema.store_title_ratings_ingestion(cursor, ratings)
 
-            for i in range(1000):
+            for i in range(100):
                 logger.info("Running title ratings ingestion insert partition :" + str(i))
                 cursor.execute("""
                     insert into imdb.titleRatings (titleId, averageRating, numVotes) 
@@ -108,7 +108,7 @@ def main(
                     from imdb.titleRatingsIngestion i
                         inner join imdb.titleBasics tb
                             on tb.titleId = i.titleId
-                    where i.id %% 1000 = %(iterator_i)s
+                    where i.numVotes %% 100 = %(iterator_i)s
                     ON CONFLICT (titleId)
                     DO UPDATE SET
                         averageRating = excluded.averageRating,
