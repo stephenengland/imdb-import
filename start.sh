@@ -1,16 +1,16 @@
 #!/bin/bash
 
-wget -qO- https://datasets.imdbws.com/title.basics.tsv.gz | gunzip > title.basics.tsv
-python -u ./main.py --ingestion_type titles
-rm title.basics.tsv
+mkdir s3files
+cd s3files
+wget https://datasets.imdbws.com/name.basics.tsv.gz
+wget https://datasets.imdbws.com/title.akas.tsv.gz
+wget https://datasets.imdbws.com/title.basics.tsv.gz
+wget https://datasets.imdbws.com/title.crew.tsv.gz
+wget https://datasets.imdbws.com/title.episode.tsv.gz
+wget https://datasets.imdbws.com/title.principals.tsv.gz
+wget https://datasets.imdbws.com/title.ratings.tsv.gz
+cd ..
 
-wget -qO- https://datasets.imdbws.com/title.ratings.tsv.gz | gunzip > title.ratings.tsv
-python -u ./main.py --ingestion_type ratings
-rm title.ratings.tsv
-
-wget -qO- https://datasets.imdbws.com/name.basics.tsv.gz | gunzip > name.basics.tsv
-python -u ./main.py --ingestion_type names
-rm name.basics.tsv
-
-wget -qO- https://datasets.imdbws.com/title.principals.tsv.gz | gunzip > title.principals.tsv
-python -u ./main.py --ingestion_type principals
+cd imdbpy
+ls
+python ./bin/s32imdbpy.py ../s3files postgres://$RDS_USER:$RDS_PASSWORD@$RDS_SERVER/$RDS_DATABASE
