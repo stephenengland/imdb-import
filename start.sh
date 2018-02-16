@@ -1,5 +1,6 @@
 #!/bin/bash
 
+echo "Running latest version"
 mkdir s3files
 cd s3files
 wget https://datasets.imdbws.com/name.basics.tsv.gz
